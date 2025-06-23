@@ -111,7 +111,7 @@ Feel free to submit issues or pull requests on the GitHub repository. Contributi
 
 ## License
 
-[Specify your license here, e.g., MIT License] - Add details or a link to the license file if applicable.
+This project is licensed under the MIT License. See the LICENSE file for details.
 
 ## Contact
 
