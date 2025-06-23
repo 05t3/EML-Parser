@@ -6,10 +6,16 @@ import hashlib
 import argparse
 import os
 from email import policy
+import json
+import csv
+from collections import OrderedDict
 
 def parse_eml(file_path):
     """Parse the .eml file and extract relevant fields starting from Subject, including URLs from base64 HTML."""
     try:
+        with open(file_path, 'rb') as file:  # Read as binary for MD5
+            file_content = file.read()
+            md5_sum = hashlib.md5(file_content).hexdigest()
         with open(file_path, 'r', encoding='utf-8') as file:
             msg = email.message_from_file(file, policy=policy.default)
     except UnicodeDecodeError:
@@ -158,85 +164,228 @@ def parse_eml(file_path):
                         'MD5 of Content': md5_hash
                     })
 
-    # Format output (only from Subject onward)
-    result = {
-        'Subject': subject,
-        'From': from_email,
-        'Display Name': display_name,
-        'To': to_email,
-        'Cc': cc,
-        'In-Reply-To': in_reply_to,
-        'Date': date_str,
-        'Message-ID': message_id,
-        'Originating IP': originating_ip,
-        'rDNS': rdns,
-        'Return-Path': return_path,
-        'SPF Status': spf_status,
-        'SPF IP': spf_ip,
-        'DKIM Status': dkim_status,
-        'DKIM Domain': dkim_domain,
-        'DMARC Status': dmarc_status,
-        'DMARC Action': dmarc_action,
-        'URLs': urls
-    }
+    # Format output with ordered keys
+    result = OrderedDict([
+        ('Subject', subject),
+        ('From', from_email),
+        ('Display Name', display_name),
+        ('To', to_email),
+        ('Cc', cc),
+        ('In-Reply-To', in_reply_to),
+        ('Date', date_str),
+        ('Message-ID', message_id),
+        ('Originating IP', originating_ip),
+        ('rDNS', rdns),
+        ('Return-Path', return_path),
+        ('SPF Status', spf_status),
+        ('SPF IP', spf_ip),
+        ('DKIM Status', dkim_status),
+        ('DKIM Domain', dkim_domain),
+        ('DMARC Status', dmarc_status),
+        ('DMARC Action', dmarc_action),
+        ('URLs', urls)
+        # ('File', file_path)
+    ])
     if attachments:
         result['Attachment Details'] = attachments
+    result['EML File Md5sum'] = md5_sum  # Add MD5 at the end for JSON, but handle separately in text
 
     return result
 
-def print_extracted_data(data, file_path):
-    """Print the extracted data in a readable format starting from Subject with file context."""
+def print_extracted_data(data, file_path, output_file=None, format='text'):
+    """Print the extracted data in a readable format starting from Subject with file context, or export to specified format."""
     if not data:
         print(f"No data extracted from {file_path}.")
         return
-    print(f"Results for {file_path}:")
-    print("\n")
-    for key, value in data.items():
-        if key == 'Subject' or value != 'None':  # Print only from Subject and non-None values
-            if key == 'URLs' and value != 'None' and isinstance(value, list):
-                print("URLs:")
-                for url in value:
-                    print(f"  {url}")
-            elif key == 'Attachment Details' and isinstance(value, list):
-                print("Attachment Details:")
-                for att in value:
-                    for att_key, att_value in att.items():
-                        print(f"  {att_key}: {att_value}")
-            else:
-                print(f"{key}: {value}")
-    print("\n")
-    print("========================================================================================================================================================================\n")
+
+    if format == 'json' and not output_file:
+        # Print JSON to terminal if no output file is specified
+        print(json.dumps([data], indent=2))  # Wrap in list for consistency
+        return
+
+    if output_file and format in ['json', 'csv', 'text']:
+        result = data.copy()
+        try:
+            if format == 'json':
+                # Collect data for later export
+                if output_file and 'all_results' in globals():
+                    all_results.append(result)
+            elif format == 'csv':
+                # Collect data for later export
+                if output_file and 'all_results' in globals():
+                    all_results.append(result)
+            elif format == 'text':
+                output_lines = []
+                output_lines.append(f"Results for {file_path}:")
+                output_lines.append("\n")
+                output_lines.append(f"EML File Md5sum: {data.get('EML File Md5sum', 'None')}")
+                # Use the same order as CSV, skipping 'EML File Md5sum' which is already printed
+                ordered_keys = [
+                    'Subject', 'From', 'Display Name', 'To', 'Cc', 'In-Reply-To', 'Date',
+                    'Message-ID', 'Originating IP', 'rDNS', 'Return-Path', 'SPF Status',
+                    'SPF IP', 'DKIM Status', 'DKIM Domain', 'DMARC Status', 'DMARC Action',
+                    'URLs', 'File'
+                ]
+                for key in ordered_keys:
+                    value = data.get(key, 'None')
+                    if value != 'None' or key == 'Subject':  # Print Subject and non-None values
+                        if key == 'URLs' and value != 'None' and isinstance(value, list):
+                            output_lines.append("URLs:")
+                            for url in value:
+                                output_lines.append(f"  {url}")
+                        elif key == 'Attachment Details' and isinstance(value, list):
+                            output_lines.append("Attachment Details:")
+                            for att in value:
+                                for att_key, att_value in att.items():
+                                    output_lines.append(f"  {att_key}: {att_value}")
+                        else:
+                            output_lines.append(f"{key}: {value}")
+                output_lines.append("\n")
+                output_lines.append("========================================================================================================================================================================\n")
+
+                with open(output_file, 'a') as f:  # Append mode to collect all files
+                    f.writelines(line + '\n' for line in output_lines)
+        except Exception as e:
+            print(f"Error exporting to {output_file}: {e}")
+
+    else:
+        print(f"Results for {file_path}:")
+        print("\n")
+        for key, value in data.items():
+            if key == 'Subject' or value != 'None':  # Print only from Subject and non-None values
+                if key == 'URLs' and value != 'None' and isinstance(value, list):
+                    print("URLs:")
+                    for url in value:
+                        print(f"  {url}")
+                elif key == 'Attachment Details' and isinstance(value, list):
+                    print("Attachment Details:")
+                    for att in value:
+                        for att_key, att_value in att.items():
+                            print(f"  {att_key}: {att_value}")
+                else:
+                    print(f"{key}: {value}")
+        print("\n")
+        print("========================================================================================================================================================================\n")
+
+def write_csv_output(output_file, all_results):
+    """Write all aggregated results to a single CSV file."""
+    if not all_results:
+        print("No data to export to CSV.")
+        return
+
+    # Define the desired field order
+    desired_fieldnames = [
+        'Subject',
+        'From',
+        'Display Name',
+        'To',
+        'Cc',
+        'In-Reply-To',
+        'Date',
+        'Message-ID',
+        'Originating IP',
+        'rDNS',
+        'Return-Path',
+        'SPF Status',
+        'SPF IP',
+        'DKIM Status',
+        'DKIM Domain',
+        'DMARC Status',
+        'DMARC Action',
+        'URLs',
+        'EML File Md5sum'
+    ]
+    # Add attachment fields if any result has attachments
+    has_attachments = any('Attachment Details' in result and isinstance(result['Attachment Details'], list) for result in all_results)
+    if has_attachments:
+        desired_fieldnames.extend(['Filename', 'MD5 of Content'])
+
+    try:
+        with open(output_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=desired_fieldnames)
+            writer.writeheader()
+            for result in all_results:
+                if 'Attachment Details' in result and isinstance(result['Attachment Details'], list):
+                    for att in result['Attachment Details']:
+                        row = result.copy()
+                        row.update(att)
+                        del row['Attachment Details']  # Remove nested list after flattening
+                        writer.writerow(row)
+                else:
+                    writer.writerow(result)
+        print(f"Data exported to {output_file} in CSV format.")
+    except Exception as e:
+        print(f"Error exporting to {output_file}: {e}")
+
+def write_json_output(output_file, all_results):
+    """Write all aggregated results to a single JSON file."""
+    if not all_results:
+        print("No data to export to JSON.")
+        return
+
+    try:
+        with open(output_file, 'w') as f:
+            json.dump(all_results, f, indent=2)
+        print(f"Data exported to {output_file} in JSON format.")
+    except Exception as e:
+        print(f"Error exporting to {output_file}: {e}")
+
+def write_text_output(output_file, file_count):
+    """Write a confirmation message for text output after all files are processed."""
+    if file_count > 0:
+        print(f"Data exported to {output_file} in TEXT format.")
 
 def main():
     parser = argparse.ArgumentParser(description="Parse .eml files and extract relevant information.")
     parser.add_argument('-i', '--input', type=str, help='Path to a single .eml file to parse')
     parser.add_argument('-d', '--directory', type=str, help='Path to a directory containing .eml files to parse')
+    parser.add_argument('-o', '--output', type=str, help='Output file path (e.g., output.json)')
+    parser.add_argument('--format', type=str, default='text', choices=['text', 'json', 'csv'], help='Output format (text, json, csv)')
     args = parser.parse_args()
 
     if not args.input and not args.directory:
         parser.print_help()
         sys.exit(1)
 
+    all_results = []  # Initialize here to collect all results
+    file_count = 0
+
     if args.input:
         if not os.path.isfile(args.input) or not args.input.lower().endswith('.eml'):
             print(f"Error: {args.input} is not a valid .eml file.")
             sys.exit(1)
         extracted_data = parse_eml(args.input)
-        print_extracted_data(extracted_data, args.input)
+        print_extracted_data(extracted_data, args.input, args.output, args.format)
+        if args.output and args.format == 'csv' and extracted_data:
+            all_results.append(extracted_data)
+            write_csv_output(args.output, all_results)
+        elif args.output and args.format == 'json' and extracted_data:
+            all_results.append(extracted_data)
+            write_json_output(args.output, all_results)
+        elif args.output and args.format == 'text' and extracted_data:
+            write_text_output(args.output, 1)  # Single file case
 
     if args.directory:
         if not os.path.isdir(args.directory):
             print(f"Error: {args.directory} is not a valid directory.")
             sys.exit(1)
-        file_count = 0
         for root, _, files in os.walk(args.directory):
             for file in files:
                 if file.lower().endswith('.eml'):
                     file_path = os.path.join(root, file)
                     extracted_data = parse_eml(file_path)
-                    print_extracted_data(extracted_data, file_path)
+                    print_extracted_data(extracted_data, file_path, args.output, args.format)
+                    if extracted_data:
+                        all_results.append(extracted_data)
                     file_count += 1
-        if file_count > 0:
+        if file_count > 0 and args.output:
+            if args.format == 'csv':
+                write_csv_output(args.output, all_results)
+            elif args.format == 'json':
+                write_json_output(args.output, all_results)
+            elif args.format == 'text':
+                write_text_output(args.output, file_count)
+        elif file_count > 0:
             print()  # Add a newline after the last delimiter for clean output
 
 if __name__ == '__main__':
